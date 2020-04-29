@@ -20,8 +20,8 @@ with open("farm/__init__.py", "rb") as f:
 
 def open_file(filename):
     """Open and read the file *filename*."""
-    with open(filename) as f:
-        return f.read()
+    with open(filename) as reader:
+        return reader.read()
 
 
 readme = open_file("README.md")
@@ -33,7 +33,7 @@ setup(
     long_description=readme,
     keywords='test regress',
     platforms='any',
-    install_requires=[''],
+    install_requires=['click'],
 
     author='RobotSlacker',
     author_email='184902652@qq.com',
