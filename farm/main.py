@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import shlex
 import subprocess
 import traceback
 import socket
@@ -17,6 +18,7 @@ from time import strftime, localtime
 import getpass
 import signal
 import copy
+import distutils.dir_util
 
 from .__init__ import __version__
 
@@ -130,7 +132,6 @@ class FarmHandler(object):
               '(' + \
               '   NAME            TEXT,' + \
               '   DESCRIPTION     TEXT,' + \
-              '   DIRECTORY       TEXT,' + \
               '   MAIN_ENTRY      TEXT,' + \
               '   LIMIT_TIME      INTEGER,' + \
               '   REGRESS_TYPE    TEXT,' + \
@@ -181,21 +182,22 @@ class FarmHandler(object):
         '''
         sql = 'CREATE TABLE FARM_JOBS ' + \
               '(' + \
-              '   ID            INTEGER,' + \
-              '   TASK_ID       INTEGER,' + \
-              '   SUITE_NAME       TEXT,' + \
-              '   REGRESS_NAME     TEXT,' + \
-              '   LABEL_NAME       TEXT,' + \
-              '   STATUS           TEXT,' + \
-              '   SUBMITTED_DATE   TEXT,' + \
-              '   STARTED_DATE     TEXT,' + \
-              '   COMPLETED_DATE   TEXT,' + \
+              '   ID                     INTEGER,' + \
+              '   TASK_ID                INTEGER,' + \
+              '   SUITE_NAME                TEXT,' + \
+              '   REGRESS_NAME              TEXT,' + \
+              '   LABEL_NAME                TEXT,' + \
+              '   STATUS                    TEXT,' + \
+              '   SUBMITTED_DATE            TEXT,' + \
+              '   STARTED_DATE              TEXT,' + \
+              '   COMPLETED_DATE            TEXT,' + \
               '   WORKER_USER_NAME          TEXT,' + \
               '   WORKER_MACHINE_NAME       TEXT,' + \
               '   WORKER_OS_PID          INTEGER,' + \
               '   WORKER_WORK_DIRECTORY     TEXT,' + \
               '   WORKER_BACKUP_DIRECTORY   TEXT,' + \
-              '   REGRESS_OPTIONS           TEXT' + \
+              '   REGRESS_OPTIONS           TEXT,' + \
+              '   NOTES                     TEXT' + \
               ')'
         self.conn.execute(sql)
         sql = 'CREATE UNIQUE INDEX IDX_FARM_JOBS ON FARM_JOBS(ID)'
@@ -212,6 +214,7 @@ class FarmHandler(object):
               '   LABEL_NAME                  TEXT,' + \
               '   TOTAL_JOBS               INTEGER,' + \
               '   COMPLETED_JOBS           INTEGER,' + \
+              '   FAILED_JOBS              INTEGER,' + \
               '   RUNNING_JOBS             INTEGER,' + \
               '   SUBMITTED_DATE              TEXT,' + \
               '   USER_NAME                   TEXT,' + \
@@ -231,7 +234,7 @@ class FarmHandler(object):
 
     # 添加新的回归测试
     def add_regress(self,
-                    p_regress_name, p_regress_directory,
+                    p_regress_name,
                     p_regress_main_entry, p_regress_limit_time,
                     p_regress_type):
         try:
@@ -253,8 +256,8 @@ class FarmHandler(object):
                     return {'Result': False, 'Message': 'Regress [' + p_regress_name + '] already existed. add failed'}
 
             # 插入新的记录
-            sql = 'INSERT INTO FARM_REGRESS(NAME,DIRECTORY,MAIN_ENTRY,LIMIT_TIME,REGRESS_TYPE) VALUES(' + \
-                  "'" + p_regress_name + "','" + p_regress_directory + "','" + p_regress_main_entry + "'," + \
+            sql = 'INSERT INTO FARM_REGRESS(NAME,MAIN_ENTRY,LIMIT_TIME,REGRESS_TYPE) VALUES(' + \
+                  "'" + p_regress_name + "','" + p_regress_main_entry + "'," + \
                   str(p_regress_limit_time) + ",'" + p_regress_type + "')"
             self.conn.execute(sql)
             self.conn.commit()
@@ -328,12 +331,12 @@ class FarmHandler(object):
             else:
                 m_TaskID = 1
             sql = 'INSERT INTO FARM_TASKS(' + \
-                  "ID,SUITE_OR_REGRESS_NAME,LABEL_NAME,RUNNING_JOBS,TOTAL_JOBS,COMPLETED_JOBS," \
+                  "ID,SUITE_OR_REGRESS_NAME,LABEL_NAME,RUNNING_JOBS,FAILED_JOBS,TOTAL_JOBS,COMPLETED_JOBS," \
                   "SUBMITTED_DATE,USER_NAME, REGRESS_OPTIONS, STATUS) " + \
                   'VALUES(' + str(m_TaskID) + "," + \
                   "'" + p_regress_or_suite_name + "'," + \
                   "'" + p_label_name + "'," + \
-                  "0,0,0,datetime('now')" + ",'" + p_user_name + "','" + str(p_regress_options) + "','NEW')"
+                  "0,0,0,0,datetime('now')" + ",'" + p_user_name + "','" + str(p_regress_options) + "','NEW')"
             self.conn.execute(sql)
 
             # 查看提交的是否是一个测试套件
@@ -469,7 +472,7 @@ class FarmHandler(object):
 
             # 列出可以执行的JOB
             m_JobInfo = {'Result': False}
-            sql = "SELECT R.DIRECTORY, R.MAIN_ENTRY, R.REGRESS_TYPE," + \
+            sql = "SELECT R.MAIN_ENTRY, R.REGRESS_TYPE," + \
                   "       J.ID, J.REGRESS_NAME, J.LABEL_NAME, L.PROPERTIES," + \
                   "       R.LIMIT_TIME, J.TASK_ID, J.REGRESS_OPTIONS " + \
                   "FROM   FARM_LABEL L, FARM_JOBS J, FARM_REGRESS R " + \
@@ -478,16 +481,15 @@ class FarmHandler(object):
                   "LIMIT 1"
             cursor = self.conn.execute(sql)
             for row in cursor:
-                m_JobInfo['DIRECTORY'] = str(row[0])
-                m_JobInfo['MAIN_ENTRY'] = str(row[1])
-                m_JobInfo['REGRESS_TYPE'] = str(row[2])
-                m_JobInfo['ID'] = str(row[3])
-                m_JobInfo['REGRESS_NAME'] = str(row[4])
-                m_JobInfo['LABEL_NAME'] = str(row[5])
-                m_JobInfo['PROPERTIES'] = str(row[6])
-                m_JobInfo['LIMIT_TIME'] = str(row[7])
-                m_JobInfo['TASK_ID'] = str(row[8])
-                m_JobInfo['REGRESS_OPTIONS'] = str(row[9])
+                m_JobInfo['MAIN_ENTRY'] = str(row[0])
+                m_JobInfo['REGRESS_TYPE'] = str(row[1])
+                m_JobInfo['ID'] = str(row[2])
+                m_JobInfo['REGRESS_NAME'] = str(row[3])
+                m_JobInfo['LABEL_NAME'] = str(row[4])
+                m_JobInfo['PROPERTIES'] = str(row[5])
+                m_JobInfo['LIMIT_TIME'] = str(row[6])
+                m_JobInfo['TASK_ID'] = str(row[7])
+                m_JobInfo['REGRESS_OPTIONS'] = str(row[8])
                 m_JobInfo['Result'] = True
                 break
             cursor.close()
@@ -542,7 +544,7 @@ class FarmHandler(object):
         return m_JobInfo
 
     # 完成一个任务
-    def finish_job(self, p_job_id, p_job_status):
+    def finish_job(self, p_job_id, p_job_status, p_notes):
         try:
             # 连接数据库
             self.lock.acquire()
@@ -550,7 +552,8 @@ class FarmHandler(object):
 
             sql = "UPDATE FARM_JOBS " + \
                   "SET    STATUS = ' " + p_job_status + "', " + \
-                  "       COMPLETED_DATE = datetime('now') " + \
+                  "       COMPLETED_DATE = datetime('now'), " + \
+                  "       NOTES = '" + p_notes + "'" + \
                   "WHERE  ID = " + str(p_job_id)
             self.conn.execute(sql)
 
@@ -592,7 +595,7 @@ def run_test(p_test_main_file, p_test_main_class, p_sys_argv):
 
 # 运行RF测试程序
 def run_robot_framework_test(
-        p_test_directory, p_test_main_entry,
+        p_test_main_entry,
         p_test_module_name,
         p_test_label_properties,
         p_sys_argv):
@@ -601,42 +604,53 @@ def run_robot_framework_test(
     m_repository_home = os.environ['T_SRCHOME']
     os.environ['ROBOT_OPTIONS'] = "--critical regression --suitestatlevel 3"
     os.environ['ROBOT_SYSLOG_FILE'] = m_robot_syslog
-    Commands = "python -m robot --loglevel DEBUG:INFO --outputdir " + m_robot_outputdir + " " + \
-               os.path.join(str(m_repository_home), "test", p_test_module_name, p_test_directory, p_test_main_entry)
+    Commands = "robot --loglevel DEBUG:INFO --outputdir " + m_robot_outputdir + " " + p_test_main_entry
 
     # 将p_test_label_properties中的信息变成环境变量
-    m_robot_environs = p_test_label_properties.split(":")
-    for m_robot_environ_str in m_robot_environs:
-        m_robot_environ_key_value = m_robot_environ_str.split('=')
-        if len(m_robot_environ_key_value) >= 2:
-            m_robot_environ_key = m_robot_environ_key_value[0]
-            m_robot_environ_value = m_robot_environ_key_value[1]
+    m_robot_environs = shlex.shlex(p_test_label_properties)
+    m_robot_environs.whitespace = ','
+    m_robot_environs.quotes = "'"
+    m_robot_environs.whitespace_split = True
+    for m_robot_environ_str in list(m_robot_environs):
+        m_nPos = m_robot_environ_str.find('=')
+        if m_nPos != -1:
+            m_robot_environ_key = m_robot_environ_str[0:m_nPos].strip()
+            m_robot_environ_value = m_robot_environ_str[m_nPos+1:].strip()
         else:
-            m_robot_environ_key = m_robot_environ_key_value[0]
-            m_robot_environ_value = ""
-        if len(m_robot_environ_key) != 0:
-            os.environ[m_robot_environ_key] = m_robot_environ_value
-            print('label ENV [' + m_robot_environ_key + ']=[' + m_robot_environ_value + ']')
+            m_robot_environ_key = m_robot_environ_str
+            m_robot_environ_value = "1"
+        os.environ[m_robot_environ_key] = m_robot_environ_value
+        print('label ENV [' + m_robot_environ_key + ']=[' + m_robot_environ_value + ']')
 
     # 将p_sys_argv中的信息变成环境变量
-    m_robot_environs = p_sys_argv.split(":")
-    for m_robot_environ_str in m_robot_environs:
-        m_robot_environ_key_value = m_robot_environ_str.split('=')
-        if len(m_robot_environ_key_value) >= 2:
-            m_robot_environ_key = m_robot_environ_key_value[0]
-            m_robot_environ_value = m_robot_environ_key_value[1]
+    m_robot_environs = shlex.shlex(p_sys_argv)
+    m_robot_environs.whitespace = ','
+    m_robot_environs.quotes = "'"
+    m_robot_environs.whitespace_split = True
+    for m_robot_environ_str in list(m_robot_environs):
+        m_nPos = m_robot_environ_str.find('=')
+        if m_nPos != -1:
+            m_robot_environ_key = m_robot_environ_str[0:m_nPos].strip()
+            m_robot_environ_value = m_robot_environ_str[m_nPos+1:].strip()
         else:
-            m_robot_environ_key = m_robot_environ_key_value[0]
-            m_robot_environ_value = ""
-        if len(m_robot_environ_key) != 0:
-            os.environ[m_robot_environ_key] = m_robot_environ_value
-            print('option ENV [' + m_robot_environ_key + ']=[' + m_robot_environ_value + ']')
+            m_robot_environ_key = m_robot_environ_str
+            m_robot_environ_value = "1"
+        os.environ[m_robot_environ_key] = m_robot_environ_value
+        print('Options ENV [' + m_robot_environ_key + ']=[' + m_robot_environ_value + ']')
 
     # 启动RF程序
     print("Will run robot command [" + Commands + "]")
-    p = subprocess.Popen(Commands, shell=True, stdout=subprocess.PIPE)
-    for output in p.stdout.readlines():
-        print(output.strip())
+    if 'win32' in str(sys.platform).lower():
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags = subprocess.CREATE_NEW_CONSOLE | subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        p = subprocess.Popen(Commands,
+                             startupinfo=startupinfo)
+        p.communicate()
+    else:
+        p = subprocess.Popen(Commands,
+                             shell=True)
+        p.communicate()
     print("Finished command [" + Commands + "]")
 
 
@@ -653,7 +667,6 @@ def signal_handler(signum, frame):
 # @click.option("--list_regress", is_flag=True, help="list current regress tests")
 # @click.option("--delete_regress", is_flag=True, help="delete regress.")
 @click.option("--regress_name", type=str, help="Regress name.")
-@click.option("--regress_directory", type=str, help="Regress file directory.")
 @click.option("--regress_main_entry", type=str, help="Regress main file.")
 @click.option("--regress_limit_time", default=3600*1000, type=int, help="Regress limit time(S).")
 @click.option("--regress_options", default='', type=str, help="Regress options.")
@@ -673,7 +686,6 @@ def farm(
         init,
         add_regress,
         regress_name,
-        regress_directory,
         regress_main_entry,
         regress_limit_time,
         regress_options,
@@ -715,18 +727,17 @@ def farm(
 
     # 新增一个回归测试
     if add_regress:
-        if not (regress_name and regress_directory and regress_main_entry):
+        if not (regress_name and regress_main_entry):
             # 用户输入的参数有误
             print('Missed necessary information.  Please set it and try again')
             print(
-                "--add-regress --regress_name xxx --regress_directory xxx " +
+                "--add-regress --regress_name xxx " +
                 "--regress_main_entry xxx --regress_limit_time")
             sys.exit(1)
         c = Client((server, port), authkey=b'welcome')
         proxy = RPCProxy(c)
         m_Result = proxy.add_regress(
             p_regress_name=regress_name,
-            p_regress_directory=regress_directory,
             p_regress_main_entry=regress_main_entry,
             p_regress_limit_time=regress_limit_time,
             p_regress_type=regress_type
@@ -877,118 +888,133 @@ def farm(
             os.mkdir(m_backup_directory)
         print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Backup directory：' + m_backup_directory)
 
-        # 循环检查作业任务
-        while True:
-            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Checking TODO list .......")
+        # 检查作业任务
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Checking TODO list .......")
 
-            # 查看是否有需要完成的JOB
+        # 查看是否有需要完成的JOB
+        c = Client((server, port), authkey=b'welcome')
+        proxy = RPCProxy(c)
+        m_Result = proxy.get_todo_job(
+            p_worker_user_name=getpass.getuser(),
+            p_os_pid=str(os.getpid()),
+            p_machine_name=socket.gethostname(),
+            p_work_directory=m_work_directory,
+            p_backup_directory=m_backup_directory
+        )
+        c.close()
+
+        # 如果没有需要完成的工作,就退出
+        if not m_Result['Result']:
+            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Info:: " + str(m_Result['Message']))
+            sys.exit(0)
+
+        # 开始工作
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) +
+              'Will do JOB [' + str(m_Result['ID']) + '] ....')
+
+        # 获得当前程序工作路径
+        m_current_directory = os.getcwd()
+        if not os.path.exists(m_work_directory):
+            os.mkdir(m_work_directory)
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Work directory ：' + m_work_directory)
+        os.chdir(m_work_directory)
+
+        # 清空工作目录下所有内容
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) +
+              'Cleaning all files under [' + m_work_directory + ']')
+        fileList = list(os.listdir(m_work_directory))
+        for file in fileList:
+            if os.path.isfile(file):
+                os.remove(file)
+            else:
+                shutil.rmtree(file)
+
+        # 复制测试目录下所有文件到当前工作目录
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Copying test ')
+        m_TestPath = os.path.join(os.environ['T_SRCHOME'], str(m_Result['REGRESS_NAME']))
+        if not os.path.exists(m_TestPath):
             c = Client((server, port), authkey=b'welcome')
             proxy = RPCProxy(c)
-            m_Result = proxy.get_todo_job(
-                p_worker_user_name=getpass.getuser(),
-                p_os_pid=str(os.getpid()),
-                p_machine_name=socket.gethostname(),
-                p_work_directory=m_work_directory,
-                p_backup_directory=m_backup_directory
+            m_Finished_Result = proxy.finish_job(
+                p_job_id=m_Result['ID'],
+                p_job_status='ERROR',
+                p_notes='TestPath not exist. [' + str(m_TestPath) + "]"
             )
             c.close()
+            if not m_Finished_Result['Result']:
+                print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Error:: " + str(m_Finished_Result['Message']))
+                sys.exit(1)
+            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Aborted JOB ' + str(m_Result['ID']))
+            sys.exit(0)
+        else:
+            distutils.dir_util.copy_tree(m_TestPath, m_work_directory)
 
-            # 如果没有需要完成的工作，就休息10S后再次尝试
-            if not m_Result['Result']:
-                print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Error:: " + str(m_Result['Message']))
-                time.sleep(10)
-                continue
+        # 程序输出、错误定向到新的目录
+        m_module_name = m_Result['REGRESS_NAME']
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Will write output log to ：' + m_module_name + '.tlg')
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Will write error log to ：' + m_module_name + '.err')
+        sys.stdout = open(m_module_name + '.tlg', 'w')
+        sys.stderr = open(m_module_name + '.err', 'w')
 
-            # 开始工作
+        # 运行Case
+        m_test_option = m_Result['REGRESS_OPTIONS']
+        if m_Result['REGRESS_TYPE'].upper() == 'RF':
             print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) +
-                  'Will do JOB [' + str(m_Result['ID']) + '] ....')
-
-            # 获得当前程序工作路径
-            m_current_directory = os.getcwd()
-            if not os.path.exists(m_work_directory):
-                os.mkdir(m_work_directory)
-            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Work directory ：' + m_work_directory)
-            os.chdir(m_work_directory)
-
-            # 清空工作目录下所有内容
+                  'Started RF test ' + m_module_name)
+            worker_thread = threading.Thread(
+                target=run_robot_framework_test,
+                args=(
+                    str(m_Result['MAIN_ENTRY']),
+                    m_module_name,
+                    str(m_Result['PROPERTIES']),
+                    m_test_option))
+            worker_thread.setDaemon(True)
+            worker_thread.start()
+            worker_thread.join(int(m_Result['LIMIT_TIME']))
+            if worker_thread.is_alive():
+                print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) +
+                      'Error:  MAX LIMIT TIME EXCEED: ' + str(m_Result['LIMIT_TIME']))
+        else:
             print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) +
-                  'Cleaning all files under [' + m_work_directory + ']')
-            fileList = list(os.listdir(m_work_directory))
+                  "Error:: UNKNOWN REGRESS_TYPE [" + m_Result['REGRESS_TYPE'] + "]")
+
+        # 还原程序输出、错误输出的位置
+        sys.stdout.close()
+        sys.stderr.close()
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+
+        # 备份工作日志
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'backup log ' + str(m_Result['ID']))
+        m_backup_directory = os.path.join(m_backup_directory, str(m_Result['ID']))
+        if os.path.exists(m_backup_directory):
+            os.chdir(m_backup_directory)
+            fileList = list(os.listdir(m_backup_directory))
             for file in fileList:
                 if os.path.isfile(file):
                     os.remove(file)
                 else:
                     shutil.rmtree(file)
-
-            # 程序输出、错误定向到新的目录
-            m_module_name = m_Result['REGRESS_NAME']
-            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Will write output log to ：' + m_module_name + '.tlg')
-            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Will write error log to ：' + m_module_name + '.err')
-            sys.stdout = open(m_module_name + '.tlg', 'w')
-            sys.stderr = open(m_module_name + '.err', 'w')
-
-            # 运行Case
-            m_test_option = m_Result['REGRESS_OPTIONS']
-
-            if m_Result['REGRESS_TYPE'] == 'RF':
-                print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) +
-                      'Started RF test ' + m_module_name)
-                worker_thread = threading.Thread(
-                    target=run_robot_framework_test,
-                    args=(
-                        str(m_Result['DIRECTORY']),
-                        str(m_Result['MAIN_ENTRY']),
-                        m_module_name,
-                        str(m_Result['PROPERTIES']),
-                        m_test_option))
-                worker_thread.setDaemon(True)
-                worker_thread.start()
-                worker_thread.join(int(m_Result['LIMIT_TIME']))
-                if worker_thread.is_alive():
-                    print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) +
-                          'Error:  MAX LIMIT TIME EXCEED: ' + str(m_Result['LIMIT_TIME']))
-            else:
-                print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Error:: UNKNOWN REGRESS_TYPE")
-
-            # 还原程序输出、错误输出的位置
-            sys.stdout.close()
-            sys.stderr.close()
-            sys.stdout = sys.__stdout__
-            sys.stderr = sys.__stderr__
-
-            # 备份工作日志
-            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'backup log ' + str(m_Result['ID']))
-            m_backup_directory = os.path.join(m_backup_directory, str(m_Result['ID']))
-            if os.path.exists(m_backup_directory):
-                os.chdir(m_backup_directory)
-                fileList = list(os.listdir(m_backup_directory))
-                for file in fileList:
-                    if os.path.isfile(file):
-                        os.remove(file)
-                    else:
-                        shutil.rmtree(file)
-                os.chdir(m_current_directory)
-                os.rmdir(m_backup_directory)
-            shutil.copytree(os.environ.get('T_WORK'), m_backup_directory)
-
-            # 还原工作路径
             os.chdir(m_current_directory)
+            os.rmdir(m_backup_directory)
+        shutil.copytree(os.environ.get('T_WORK'), m_backup_directory)
 
-            # 报告一下，已经完成工作
-            c = Client((server, port), authkey=b'welcome')
-            proxy = RPCProxy(c)
-            m_Finished_Result = proxy.finish_job(
-                p_job_id=m_Result['ID'],
-                p_job_status='COMPLETED')
-            c.close()
-            if not m_Finished_Result['Result']:
-                print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Error:: " + str(m_Finished_Result['Message']))
-                time.sleep(10)
-                continue
-            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Completed JOB ' + str(m_Result['ID']))
+        # 还原工作路径
+        os.chdir(m_current_directory)
 
-            # 休息10S后继续
-            time.sleep(10)
+        # 报告一下，已经完成工作
+        c = Client((server, port), authkey=b'welcome')
+        proxy = RPCProxy(c)
+        m_Finished_Result = proxy.finish_job(
+            p_job_id=m_Result['ID'],
+            p_job_status='COMPLETED',
+            p_notes="")
+        c.close()
+        if not m_Finished_Result['Result']:
+            print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + "Error:: " + str(m_Finished_Result['Message']))
+            sys.exit(1)
+        print(strftime("%Y-%m-%d %H:%M:%S:  ", localtime()) + 'Completed JOB ' + str(m_Result['ID']))
+        sys.exit(0)
 
 
 if __name__ == "__main__":
