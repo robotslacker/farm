@@ -19,6 +19,9 @@ import getpass
 import signal
 import copy
 import distutils.dir_util
+from robot.result import ExecutionResult
+from robot import utils
+import csv
 
 from .__init__ import __version__
 
@@ -599,9 +602,49 @@ def run_robot_framework_test(
         p_test_module_name,
         p_test_label_properties,
         p_sys_argv):
+    def process_file(inpath, outpath, items):
+        suite = ExecutionResult(inpath).suite
+        outfile = open(outpath, 'w')
+        writer = csv.writer(outfile)
+        writer.writerow(['TYPE', 'NAME', 'STATUS', 'START', 'END', 'ELAPSED',
+                         'ELAPSED SECS'])
+        process_suite(suite, writer, items.lower())
+        outfile.close()
+
+    def process_suite(suite, writer, items, level=0):
+        if 'suite' in items:
+            process_item(suite, writer, level, 'Suite')
+        if 'keyword' in items:
+            for kw in suite.keywords:
+                process_keyword(kw, writer, level + 1)
+        for subsuite in suite.suites:
+            process_suite(subsuite, writer, items, level + 1)
+        for test in suite.tests:
+            process_test(test, writer, items, level + 1)
+
+    def process_test(test, writer, items, level):
+        if 'test' in items:
+            process_item(test, writer, level, 'Test', 'suite' not in items)
+        if 'keyword' in items:
+            for kw in test.keywords:
+                process_keyword(kw, writer, level + 1)
+
+    def process_keyword(kw, writer, level):
+        if kw is None:
+            return
+        process_item(kw, writer, level, kw.type.capitalize())
+        for subkw in kw.keywords:
+            process_keyword(subkw, writer, level + 1)
+
+    def process_item(item, writer, level, item_type, long_name=False):
+        indent = '' if level == 0 else ('|  ' * (level - 1) + '|- ')
+        name = (item.longname if long_name else item.name).encode('UTF-8')
+        elapsed = utils.elapsed_time_to_string(item.elapsedtime)
+        writer.writerow([indent + item_type, name, item.status, item.starttime,
+                         item.endtime, elapsed, item.elapsedtime / 1000.0])
+
     m_robot_syslog = os.path.join(os.environ['T_WORK'], p_test_module_name + "_syslog.log")
     m_robot_outputdir = os.environ['T_WORK']
-    m_repository_home = os.environ['T_SRCHOME']
     os.environ['ROBOT_OPTIONS'] = "--critical regression --suitestatlevel 3"
     os.environ['ROBOT_SYSLOG_FILE'] = m_robot_syslog
     Commands = "robot --loglevel DEBUG:INFO --outputdir " + m_robot_outputdir + " " + p_test_main_entry
@@ -649,9 +692,14 @@ def run_robot_framework_test(
         p.communicate()
     else:
         p = subprocess.Popen(Commands,
-                             shell=True)
-        p.communicate()
+                             shell=True,
+                             stdout=subprocess.PIPE)
+        for output in p.stdout.readlines():
+            print(output.strip())
     print("Finished command [" + Commands + "]")
+
+    # 处理一下报告日志，记录运行时间
+    process_file("output.xml", "output.csv", "suite-test-keyword")
 
 
 # 定义中断信号的处理

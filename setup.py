@@ -33,7 +33,7 @@ setup(
     long_description=readme,
     keywords='test regress',
     platforms='any',
-    install_requires=['click'],
+    install_requires=['click', 'robotframework'],
 
     author='RobotSlacker',
     author_email='184902652@qq.com',
